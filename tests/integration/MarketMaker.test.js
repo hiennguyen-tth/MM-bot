@@ -78,7 +78,7 @@ class MockExchange {
 function makeConfig(overrides = {}) {
   return {
     symbol: 'BTC/USDT',
-    exchange: { testnet: true },
+    exchange: { testnet: true, positionMode: 'oneway' },
     spread: {
       fee: 0.001,
       baseFraction: 0.002,
@@ -176,7 +176,7 @@ describe('MarketMaker integration', () => {
     const bot = new MarketMaker(exchange, makeConfig());
     bot.inventory.inventory = 0.25;
     await bot._tick();
-    expect(spy).toHaveBeenCalledWith('BTC/USDT', 'sell', expect.any(Number));
+    expect(spy).toHaveBeenCalledWith('BTC/USDT', 'sell', expect.any(Number), expect.objectContaining({ positionSide: expect.any(String) }));
   });
 
   test('T3: hedges the short side when inventory is negative', async () => {
@@ -185,7 +185,7 @@ describe('MarketMaker integration', () => {
     const bot = new MarketMaker(exchange, makeConfig());
     bot.inventory.inventory = -0.25;
     await bot._tick();
-    expect(spy).toHaveBeenCalledWith('BTC/USDT', 'buy', expect.any(Number));
+    expect(spy).toHaveBeenCalledWith('BTC/USDT', 'buy', expect.any(Number), expect.objectContaining({ positionSide: expect.any(String) }));
   });
 
   test('T3: skips quoting after hedge (returns early)', async () => {
@@ -226,7 +226,7 @@ describe('MarketMaker integration', () => {
     );
     bot.inventory.inventory = 0.25;
     await bot._tick();
-    expect(marketSpy).toHaveBeenCalledWith('BTC/USDT', 'sell', expect.any(Number));
+    expect(marketSpy).toHaveBeenCalledWith('BTC/USDT', 'sell', expect.any(Number), expect.objectContaining({ positionSide: expect.any(String) }));
   });
 
   // ── T1: Quote placement ─────────────────────────────────────────────────────

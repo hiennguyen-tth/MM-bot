@@ -15,6 +15,11 @@ module.exports = {
         testnet: process.env.TESTNET !== 'false', // default: true (safe)
         // BingX only: 'spot' | 'swap' (perpetual futures)
         marketType: process.env.MARKET_TYPE || 'spot',
+        // BingX swap position mode (must match account setting in BingX → Settings → Position Mode):
+        //   'oneway'  – BingX default, one position per symbol, uses positionSide=BOTH
+        //   'hedge'   – separate LONG/SHORT positions, requires Hedge Mode enabled in account
+        // If unsure, leave 'oneway' (safe default).
+        positionMode: process.env.POSITION_MODE || 'oneway',
     },
 
     symbol: process.env.SYMBOL || 'BTC/USDT',
@@ -27,6 +32,10 @@ module.exports = {
         fee: parseFloat(process.env.FEE) || 0.001,
         volLookback: parseInt(process.env.VOL_LOOKBACK, 10) || 20,
         volMultiplier: parseFloat(process.env.VOL_MULTIPLIER) || 3,
+        // Quadratic vol boost: additive spread term ∝ vol²
+        // Disabled by default (0). Theory: risk ∝ variance, so spread should too.
+        // Recommend: 100–500 for BTC/USDT. At vol=0.003, boost=200 adds ~1.2 bps.
+        volSqBoost: parseFloat(process.env.VOL_SQ_BOOST) || 0,
     },
 
     // ── Orderbook imbalance spread ─────────────────────────────────────────────
@@ -103,6 +112,10 @@ module.exports = {
         maxMove1m: parseFloat(process.env.REGIME_FILTER_MAX_MOVE) || 0.01,
         // How long to pause quoting after trigger (ms)
         pauseMs: parseInt(process.env.REGIME_FILTER_PAUSE_MS, 10) || 45000,
+        // Intra-cycle gap: cancel+pause immediately if mid moves > X% vs previous cycle
+        // Catches flash crashes / liquidation cascades that the 1-min filter misses.
+        // Set to 0 to disable.
+        intraCycleMaxMove: parseFloat(process.env.INTRA_CYCLE_MAX_MOVE) || 0.003,
     },
 
     // ── Latency protection ─────────────────────────────────────────────────────
@@ -120,6 +133,10 @@ module.exports = {
         skewFactor: parseFloat(process.env.SKEW_FACTOR) || 0.3,
         sizeFactor: parseFloat(process.env.SIZE_FACTOR) || 0.8,
         baseSize: parseFloat(process.env.BASE_SIZE) || 0.001,
+        // BingX swap minimum contract size for BTC/USDT:USDT perpetual is 0.001 BTC.
+        // When dynamic sizing or inventory-skew reduces amounts below this, we clamp up.
+        // Set MIN_ORDER_SIZE in .env if your exchange has a different minimum.
+        minOrderSize: parseFloat(process.env.MIN_ORDER_SIZE) || 0.001,
         // Upgrade #5: Avellaneda-Stoikov reservation price decay.
         // Shifts fairPrice by −γ × ratio × vol × mid toward inventory target (0).
         //   long position → fairPrice pulled down → ask more competitive, bid less
@@ -173,6 +190,22 @@ module.exports = {
         targetVol: parseFloat(process.env.DYN_SIZE_TARGET_VOL) || 0.001,
         minMult: parseFloat(process.env.DYN_SIZE_MIN_MULT) || 0.5,
         maxMult: parseFloat(process.env.DYN_SIZE_MAX_MULT) || 2.0,
+        // v5: Inventory coupling — multiply effective size by (1 − |ratio|)^α.
+        // α=0 disables (default). α=1 = linear taper. α=2 = quadratic.
+        invCouplingAlpha: parseFloat(process.env.DYN_SIZE_INV_COUPLING) || 0,
+    },
+
+    // ── v5: Smart kill-switch ─────────────────────────────────────────────────
+    // Shuts down when volatility spikes without a corresponding edge, or when
+    // fill-rate collapses (orders resting but nothing traded — market moved away).
+    //   volThreshold  – σ above which the kill-switch arms (default: 0.008 = 80 bps/tick)
+    //   fillRateMin   – fills/quote below this after minQuotes triggers shutdown
+    //   minQuotes     – warmup period before fillRate collapse check fires
+    smartKill: {
+        enabled: process.env.SMART_KILL_ENABLED === 'true',
+        volThreshold: parseFloat(process.env.SMART_KILL_VOL_THRESHOLD) || 0.008,
+        fillRateMin: parseFloat(process.env.SMART_KILL_FILL_RATE_MIN) || 0.001,
+        minQuotes: parseInt(process.env.SMART_KILL_MIN_QUOTES, 10) || 200,
     },
 
     // ── Funding rate bias (v4) ────────────────────────────────────────────────
@@ -217,6 +250,7 @@ module.exports = {
         consecutiveLossLimit: parseInt(process.env.CONSECUTIVE_LOSS, 10) || 5,
         adverseFillThreshold: parseFloat(process.env.ADVERSE_FILL_RATIO) || 0.6,
         adverseFillWindow: parseInt(process.env.ADVERSE_FILL_WINDOW, 10) || 20,
+        // Mark-to-market loss limit on open position (USDT).\n        // When unrealizedPnL < −limit, bot shuts down immediately (bypasses close confirmation).\n        // Set to Infinity (default) to disable. Complement to consecutive-loss breaker\n        // which only counts realized closes. Recommend: 100–300 for $10k capital.\n        unrealizedLossLimit: isFinite(parseFloat(process.env.UNREALIZED_LOSS_LIMIT))\n            ? parseFloat(process.env.UNREALIZED_LOSS_LIMIT)\n            : Infinity,
     },
 
     // ── Time-of-day (session-based cal) ──────────────────────────────────────
@@ -258,6 +292,10 @@ module.exports = {
         minCancelIntervalMs: parseInt(process.env.MIN_CANCEL_INTERVAL_MS, 10) || 5_000,
         maxCancelPerMin: parseInt(process.env.MAX_CANCEL_PER_MIN, 10) || 20,
         maxOrderAgeMs: parseInt(process.env.MAX_ORDER_AGE_MS, 10) || 120_000,
+        // v5: queue-depth awareness — force re-quote when our best order is > N bps
+        // behind the current best bid/ask (we've fallen back in the queue).
+        // 0 = disabled (default).  Example: 0.0003 = 3 bps.
+        queueDepthBps: parseFloat(process.env.REQUOTE_QUEUE_DEPTH_BPS) || 0,
     },
 
     // ── Telegram alerts ────────────────────────────────────────────────────────

@@ -117,6 +117,36 @@ class ExchangeBase {
     async getFundingRate(symbol) {
         return 0;
     }
+
+    /**
+     * Whether this adapter supports real-time order update streaming (WebSocket).
+     * Exchanges that override watchOrders() should set this to true.
+     */
+    get hasWebSocket() {
+        return false;
+    }
+
+    /**
+     * Subscribe to real-time order updates via WebSocket.
+     * Runs an async loop; resolves only when stopWatchOrders() is called or on error.
+     * Override in adapters that support WebSocket private streams.
+     *
+     * @param {string}   symbol   – trading pair
+     * @param {Function} callback – called with each order update object:
+     *                              { id, status, filled, average, side, ... }
+     * @returns {Promise<void>}
+     */
+    // eslint-disable-next-line no-unused-vars
+    async watchOrders(symbol, callback) {
+        // Default: no-op. REST polling handles fills for non-WS adapters.
+    }
+
+    /**
+     * Stop the active watchOrders() loop and close the WebSocket connection.
+     */
+    stopWatchOrders() {
+        // Default: no-op.
+    }
 }
 
 module.exports = ExchangeBase;

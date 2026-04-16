@@ -88,8 +88,15 @@ class InventoryManager {
      * @param {number} spread – fractional spread from SpreadEngine
      * @returns {{ ratio: number, skewOffset: number, orderSize: number }}
      */
-    compute(spread) {
-        const ratio = clamp(this.inventory / this.softMax, -1, 1);
+    /**
+     * @param {number} [targetInv=0] – desired inventory level (BTC).
+     *   When non-zero, ratio is computed as (inventory − targetInv) / softMax.
+     *   Used by MarketMaker to inject funding-rate bias: a negative targetInv
+     *   (when funding > 0) makes the bot behave as if it holds more inventory
+     *   than it does → natural short bias without modifying fairPrice.
+     */
+    compute(spread, targetInv = 0) {
+        const ratio = clamp((this.inventory - targetInv) / this.softMax, -1, 1);
         const skewOffset = ratio * spread * this.skewFactor;
         const orderSize = this.baseSize * (1 - Math.abs(ratio) * this.sizeFactor);
         return {

@@ -147,4 +147,33 @@ describe('InventoryManager', () => {
         const { orderSize } = mgr.compute(0.002);
         expect(orderSize).toBeGreaterThanOrEqual(0.001 * 0.1);
     });
+
+    // ── Funding bias target inventory ─────────────────────────────────────────
+
+    test('compute() with targetInv: ratio shifts as (inventory − targetInv) / softMax', () => {
+        mgr.inventory = 0.05; // baseline: ratio = 0.05/0.1 = 0.5
+        const { ratio: baselineRatio } = mgr.compute(0.002);
+        expect(baselineRatio).toBeCloseTo(0.5);
+
+        // With negative targetInv (funding bias): makes ratio more negative (short bias)
+        const { ratio: biasedRatio } = mgr.compute(0.002, -0.02); // target = -0.02
+        // ratio = (0.05 - (-0.02)) / 0.1 = 0.07 / 0.1 = 0.7 (more long-biased)
+        expect(biasedRatio).toBeCloseTo(0.7);
+    });
+
+    test('compute() targetInv = −0.05 (short target): strong short bias', () => {
+        mgr.inventory = 0; // flat position
+        const { ratio, skewOffset } = mgr.compute(0.004, -0.05);
+        // ratio = (0 − (−0.05)) / 0.1 = 0.5 (acts as if long)
+        expect(ratio).toBeCloseTo(0.5);
+        // skewOffset > 0 → asks pushed up, bids pushed down (wants to unwind)
+        expect(skewOffset).toBeGreaterThan(0);
+    });
+
+    test('compute() targetInv combined with actual inventory', () => {
+        mgr.inventory = 0.08; // long position
+        const { ratio } = mgr.compute(0.002, -0.03); // short target (from funding)
+        // ratio = (0.08 − (−0.03)) / 0.1 = 0.11 / 0.1 = 1 (clamped, wants to unwind LONG)
+        expect(ratio).toBe(1); // clamped at hardMax
+    });
 });

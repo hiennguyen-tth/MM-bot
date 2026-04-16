@@ -30,6 +30,9 @@ class MetricsCollector {
         // Hourly PnL tracking
         this._hourlyPnlBase = 0;
         this._hourlyStart = Date.now();
+
+        // v5: Alpha decay tracking (edge realized per unit notional traded)
+        this._tradedNotional = 0;
     }
 
     /** Call each time we place a quote (one call per side). */
@@ -44,8 +47,10 @@ class MetricsCollector {
      * @param {number} p.inventoryAbs - |inventory| after this fill
      * @param {number} p.inventoryMax - softMax for normalisation
      * @param {boolean} p.isAdverse   - True if price moved against us post-fill
+     * @param {number} [p.qty]        - Fill quantity (base asset) — for notional tracking
+     * @param {number} [p.fillPrice]  - Executed price — for notional tracking
      */
-    recordFill({ profit, inventoryAbs, inventoryMax, isAdverse }) {
+    recordFill({ profit, inventoryAbs, inventoryMax, isAdverse, qty = 0, fillPrice = 0 }) {
         this.fills++;
 
         this.spreadCaptured.push(profit);
@@ -68,6 +73,11 @@ class MetricsCollector {
         this.fillEvents.push({ isAdverse });
         if (this.fillEvents.length > this.adverseFillWindow) {
             this.fillEvents.shift();
+        }
+
+        // v5: Alpha decay — accumulate notional to compute edge per dollar traded
+        if (qty > 0 && fillPrice > 0) {
+            this._tradedNotional += fillPrice * qty;
         }
     }
 
@@ -99,6 +109,15 @@ class MetricsCollector {
         return adverseCount / this.fillEvents.length;
     }
 
+    /**
+     * v5: Edge realized = realized PnL / total notional traded.
+     * Measures how much P&L the strategy captures per unit of volume.
+     * Declining edgeRealized = alpha decay (market adapting to the strategy).
+     */
+    getEdgeRealized() {
+        return this._tradedNotional > 0 ? this.realizedPnl / this._tradedNotional : 0;
+    }
+
     /** Returns a plain snapshot object for logging. */
     getSnapshot() {
         const now = Date.now();
@@ -120,6 +139,7 @@ class MetricsCollector {
             hourlyPnl: hourlyPnl.toFixed(8),
             maxDrawdown: this.maxDrawdown.toFixed(8),
             adverseFillRatio: this.getAdverseFillRatio().toFixed(4),
+            edgeRealized: this.getEdgeRealized().toFixed(8),
         };
     }
 }

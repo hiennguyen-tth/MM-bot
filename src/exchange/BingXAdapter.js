@@ -80,6 +80,13 @@ class BingXAdapter extends ExchangeBase {
 
         this._ex = new ccxt.bingx(opts);
         this._marketType = marketType;
+
+        // ── WebSocket (ccxt.pro) ───────────────────────────────────────────────
+        // Created lazily on first watchOrders() call to avoid overhead when
+        // WS is not needed (e.g. testnet, unit tests, non-swap markets).
+        this._wsOpts = opts;
+        this._wsClient = null;
+        this._wsRunning = false;
     }
 
     async getOrderBook(symbol) {
@@ -131,13 +138,13 @@ class BingXAdapter extends ExchangeBase {
     }
 
     async placeLimitOrder(symbol, side, price, amount, params = {}) {
-        // BingX Hedge Mode: MM bot always quotes against the LONG position.
-        //   buy  + positionSide=LONG → open / add to LONG  ✓
-        //   sell + positionSide=LONG → close / reduce LONG ✓
-        // Using SHORT here would try to open an independent SHORT position,
-        // which requires separate margin and is NOT what an MM bot needs.
+        // BingX position mode:
+        //   oneway: positionSide=BOTH (BingX default account mode)
+        //   hedge : positionSide=LONG|SHORT (requires Hedge Mode in account settings)
+        // Default to BOTH so orders work even if account is in one-way mode.
+        // MarketMaker passes the correct positionSide based on config.exchange.positionMode.
         const swapParams = this._marketType === 'swap'
-            ? { positionSide: 'LONG', ...params }
+            ? { positionSide: 'BOTH', ...params }
             : params;
         const order = await this._ex.createLimitOrder(symbol, side, amount, price, swapParams);
         logger.debug('BingX limit order placed', {
@@ -153,7 +160,7 @@ class BingXAdapter extends ExchangeBase {
 
     async placeMarketOrder(symbol, side, amount, params = {}) {
         const swapParams = this._marketType === 'swap'
-            ? { positionSide: 'LONG', ...params }
+            ? { positionSide: 'BOTH', ...params }
             : params;
         const order = await this._ex.createMarketOrder(symbol, side, amount, swapParams);
         logger.debug('BingX market order placed', {
@@ -199,6 +206,60 @@ class BingXAdapter extends ExchangeBase {
             return { size: 0, avgCost: 0 };
         }
     }
+    /**
+     * BingX WebSocket private stream supports real-time order fill events.
+     * Only meaningful for swap (perpetual) markets where we have private auth.
+     */
+    get hasWebSocket() {
+        return this._marketType === 'swap';
+    }
+
+    /**
+     * Subscribe to real-time order updates via ccxt.pro BingX WebSocket.
+     * Automatically reconnects on transient errors.
+     * Runs until stopWatchOrders() is called.
+     *
+     * @param {string}   symbol   – trading pair (ccxt unified, e.g. 'BTC/USDT:USDT')
+     * @param {Function} callback – receives each order update: { id, status, filled, average, ... }
+     */
+    async watchOrders(symbol, callback) {
+        if (!this._wsClient) {
+            this._wsClient = new ccxt.pro.bingx(this._wsOpts);
+        }
+        this._wsRunning = true;
+
+        while (this._wsRunning) {
+            try {
+                // watchOrders resolves with an array of updated orders whenever
+                // BingX sends an order event. Blocks until the next event.
+                const orders = await this._wsClient.watchOrders(symbol);
+                for (const order of orders) {
+                    // Only surface updates that have fill activity
+                    if ((order.filled || 0) > 0 || order.status === 'closed') {
+                        callback(order);
+                    }
+                }
+            } catch (err) {
+                if (!this._wsRunning) break; // stopWatchOrders() was called
+                logger.warn('BingX WebSocket order watch error – reconnecting in 2s', {
+                    error: err.message,
+                });
+                await new Promise(r => setTimeout(r, 2_000));
+            }
+        }
+    }
+
+    /**
+     * Stop the watchOrders() loop and close the WebSocket connection.
+     */
+    stopWatchOrders() {
+        this._wsRunning = false;
+        if (this._wsClient) {
+            this._wsClient.close().catch(() => { });
+            this._wsClient = null;
+        }
+    }
+
 }
 
 module.exports = BingXAdapter;

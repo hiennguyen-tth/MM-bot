@@ -47,6 +47,11 @@ class SpreadEngine {
     this.baseFraction = config.baseFraction;
     this.volLookback = config.volLookback;
     this.volMultiplier = config.volMultiplier;
+    // Additive quadratic vol term: spread += volSqBoost × vol²
+    // Disabled by default (0). Risk scales as variance (vol²) is theoretically
+    // correct vs linear vol; amplifies spread rapidly at high-vol regimes.
+    // Recommend: 100–500 for meaningful effect on BTC/USDT (vol ≈ 0.001–0.005).
+    this.volSqBoost = config.volSqBoost || 0;
 
     this._originalBaseFraction = config.baseFraction;
 
@@ -121,10 +126,15 @@ class SpreadEngine {
         ? stdDev(this.priceHistory) / mid
         : 0;
 
-    // ── Layer 1: base vol spread ──────────────────────────────────────────────
+    // ── Layer 1: base vol spread ──────────────────────────────────────────────────
+    // Linear term: spread = max(2×fee, baseFraction × (1 + volMultiplier × vol))
+    // Quadratic boost (when volSqBoost > 0): adds volSqBoost × vol²
+    //   At vol=0.001: boost = volSqBoost × 0.000001 (negligible)
+    //   At vol=0.003: boost = volSqBoost × 0.000009 (moderate with boost=500: +4.5 bps)
+    //   At vol=0.005: boost = volSqBoost × 0.000025 (strong with boost=500: +12.5 bps)
     let spread = Math.max(
       2 * this.fee,
-      this.baseFraction * (1 + this.volMultiplier * vol)
+      this.baseFraction * (1 + this.volMultiplier * vol) + this.volSqBoost * vol * vol
     );
 
     // ── Layer 2: imbalance ────────────────────────────────────────────────────
